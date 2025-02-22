@@ -36,13 +36,14 @@ import colormap
 class dataFile(object):
     def __init__(self, directory, file, filter_bias, Rc=0, delta_true_zero_bias=0,
                  column_x_index=4, column_y_index=1, column_z_index=2,
-                 Xname=None, Yname=None, Zname=None, x_scaling=1, y_scaling=1, z_scaling=1):
+                 Xname=None, Yname=None, Zname=None, x_scaling=1, y_scaling=1, z_scaling=1,
+                 data_shape=None):
         '''
         除了bias的数据单位默认为mV(由于1000:1分压)以外其他物理量都是标准单位制
         '''
         self.directory = directory
         self.file = file
-        self.filename, self.file_suffix = os.path.splitext(file)
+        self.file_name, self.file_suffix = os.path.splitext(file)
         self.file_path = os.path.join(directory, file)  # str
 
         self.filter_bias = filter_bias
@@ -56,7 +57,10 @@ class dataFile(object):
         self.column_z_index = column_z_index  # int e.g. 6
 
         self.df = pd.read_csv(self.file_path, delimiter='\t', comment='#', header=None)
-        self.get_shape_and_names()
+        self.num_columns = self.df.shape[1]
+        self.get_comments()
+        self.get_shape_and_names() # 自动读取datashape, 当然如果给定datashape下面会强制覆盖
+        if data_shape is not None: self.y_len, self.x_len = data_shape
         self.data_shape = (self.y_len, self.x_len)
         self.Xdata = self.df.iloc[:, column_x_index-1].to_numpy().reshape(self.data_shape)
         self.Ydata = self.df.iloc[:, column_y_index-1].to_numpy().reshape(self.data_shape)
@@ -254,21 +258,51 @@ class dataFile(object):
 
 # ------------------------------- Write and read files -----------------------------------
 
-    def get_shape_and_names(self):
-        f = open(self.file_path, 'r')
-        lines = f.readlines()[6:]
-        f.close()
-        self.y_len = int(lines[6][8:])
-        self.x_len = int(lines[20][8:])
-        self.Xname = lines[self.column_x_index*14 - 9 - 1][8:][:-1] # [i*14 - 9 - 1]选出第i行, 即name所在行, [8:]去掉前缀, [:-1]去掉末尾的\n
-        self.Yname = lines[self.column_y_index*14 - 9 - 1][8:][:-1] # [i*14 - 9 - 1]选出第i行, 即name所在行, [8:]去掉前缀, [:-1]去掉末尾的\n
-        self.Zname = lines[self.column_z_index*14 - 9 - 1][8:][:-1] # [i*14 - 9 - 1]选出第i行, 即name所在行, [8:]去掉前缀, [:-1]去掉末尾的\n
+    def get_head_comments(self):
+        comments = []
+        with open(self.file_path, 'r') as file:
+            for i in range(6):
+                comments.append(file.readline())
+        return comments
 
+    def get_comments_of_column(self, n):
+        comments = []
+        start_line = 7 + 14*(n - 1) # 第一个column开头是第7行, 之后每个column占14行
+
+        with open(self.file_path, 'r') as file:
+            # start line前面的行不读
+            for i in range(start_line - 1):
+                file.readline()
+            # 从start line开始往后读14行
+            for i in range(14):
+                comments.append(file.readline())
+        
+        return comments
+    
+    def get_comments(self):
+        comments = []
+        
+        # 读取全部表头注释
+        comments.append(self.get_head_comments()) # head comments
+        for i in range(self.num_columns): # comments for every column
+            comments.append(self.get_comments_of_column(i + 1))
+
+        self.comments = comments
         return None
 
+    def get_shape_and_names(self):
+        lines = self.comments
+        self.y_len = int(lines[1][6][8:])
+        self.x_len = int(lines[2][6][8:])
+        self.Xname = lines[self.column_x_index][4][8:][:-1] # [4]选出name所在行, [8:]去掉前缀, [:-1]去掉末尾的\n
+        self.Yname = lines[self.column_y_index][4][8:][:-1] # [4]选出name所在行, [8:]去掉前缀, [:-1]去掉末尾的\n
+        self.Zname = lines[self.column_z_index][4][8:][:-1] # [4]选出name所在行, [8:]去掉前缀, [:-1]去掉末尾的\n
+        
+        return None
+    
     def write_Rc_in(self, file=None):
         if file is None:
-            file = self.directory + self.filename + '_Rc.txt'
+            file = self.directory + self.file_name + '_Rc.txt'
         with open(file, 'w') as f:
             f.write(str(self.Rc) + '\n' + str(self.y_reference))
             f.close()
@@ -277,7 +311,7 @@ class dataFile(object):
 
     def read_Rc_from(self, file=None): # 如果成功读取
         if file is None:
-            file = self.directory + self.filename + '_Rc.txt'
+            file = self.directory + self.file_name + '_Rc.txt'
         try:
             f = open(file, 'r')
             self.Rc = float(f.readline())
@@ -288,6 +322,39 @@ class dataFile(object):
         except IOError:
             print( "Wrong! Rc file is not accessible. Use default Rc")
             return True
+
+    def save_dat_processed(self, directory=None, label='processed'):
+        if directory is None:
+            directory = self.directory
+
+        file_name = self.file_name + '_' + label
+        file_path =  os.path.join(directory, file_name + '.dat')  # str
+
+        # 将二维矩阵转换为一维数组
+        X_flat = self.Xdata.flatten()
+        Y_flat = self.Ydata.flatten()
+        Z_flat = self.Zdata.flatten()
+
+        # 按列组合数据
+        output_data = np.column_stack((Y_flat, X_flat, Z_flat))
+
+        # 写入新文件
+        with open(file_path, 'w') as file:
+            # 先写入表头和对应数据列的comments
+            for comment in self.comments[0]:
+                file.write(comment)
+            for comment in self.comments[self.column_y_index]:
+                file.write(comment)
+            for comment in self.comments[self.column_x_index]:
+                file.write(comment)
+            for comment in self.comments[self.column_z_index]:
+                file.write(comment)
+
+            # 再写入数据
+            np.savetxt(file, output_data, fmt='%.6f', delimiter='\t')
+        print('Data is saved in {}'.format(file_path))
+
+        return None
 
 # ----------------------------------- append ---------------------------------------
 
