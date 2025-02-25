@@ -1360,7 +1360,7 @@ class dataFile_JJ_dIdV(dataFile_JJ):
         self.R_filter = R_filter
         self.Xdata_calibrate = self.func_calibrate_sample_bias(self.Xdata, self.Current_data, self.Rc, self.delta_true_zero_bias)
         self.xmax_claibrate = self.Xdata_calibrate.max()
-            
+        
     def calculate_calibrate_G(self):
         self.Zdata_uncalibrated = self.Zdata.copy()
         self.Zdata = 1 / (1e6*self.excitation/self.Zdata - self.Rc - self.R_filter(self.Current_data)) / 7.748e-5 # in unit of 2e2/h
