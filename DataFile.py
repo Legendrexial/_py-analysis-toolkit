@@ -38,7 +38,8 @@ class dataFile(object):
                  column_x_index=2, column_y_index=1, column_z_index=3,
                  Xname=None, Yname=None, Zname=None, x_scaling=1, y_scaling=1, z_scaling=1,
                  data_shape=None,
-                 filter_bias=None, Rc=None, delta_true_zero_bias=None):
+                 plot=True,
+                 filter_bias=None, Rc=np.nan, delta_true_zero_bias=np.nan):
         '''
         除了bias的数据单位默认为mV(由于1000:1分压)以外其他物理量都是标准单位制
         __init__不会对数据做任何处理, 只读取和整理数据
@@ -58,15 +59,15 @@ class dataFile(object):
         self.column_y_index = column_y_index  # int e.g. 2 
         self.column_z_index = column_z_index  # int e.g. 6
 
+        # 提取数据, 提取表头所有的注释并从中读取data shape和列名, 并据此格式化每一列数据
         self.df = pd.read_csv(self.file_path, delimiter='\t', comment='#', header=None)
         self.num_columns = self.df.shape[1]
         self.get_comments()
-        self.get_shape_and_names() # 自动读取datashape, 当然如果给定datashape下面会强制覆盖
+        self.get_column_names()
+        self.get_data_shape() # 自动读取datashape, 当然如果给定了datashape, 下面一句会强制覆盖
         if data_shape is not None: self.y_len, self.x_len = data_shape
         self.data_shape = (self.y_len, self.x_len)
-        self.Xdata = self.df.iloc[:, column_x_index-1].to_numpy().reshape(self.data_shape)
-        self.Ydata = self.df.iloc[:, column_y_index-1].to_numpy().reshape(self.data_shape)
-        self.Zdata = self.df.iloc[:, column_z_index-1].to_numpy().reshape(self.data_shape)
+        self.format_all_data()
 
         self.Xdata_original = self.Xdata.copy()
         self.Ydata_original = self.Ydata.copy()
@@ -77,7 +78,7 @@ class dataFile(object):
         self.y_box = self.Ydata[:, 0]
         self.y_step = (self.y_box.max() - self.y_box.min()) / (len(self.y_box)-1)
 
-        if Xname is not None: # 如果制定了name就按照指定的来, 如果没有指定, 前面的self.get_shape_and_names()已经自动识别了name
+        if Xname is not None: # 如果制定了name就按照指定的来, 如果没有指定, 前面的self.get_column_names()已经自动识别了name
             self.Xname = Xname
         if Yname is not None:
             self.Yname = Yname
@@ -89,6 +90,9 @@ class dataFile(object):
         self.z_scaling = z_scaling # 这些用于各种函数自己画图时对数据进行缩放
         
         self.Phi0 = 20.6783 # 20 Gauss*um^2
+
+        self.print_column_names()
+        if plot: self.plot_heatmap()
 
 # ------------------------------- Basic functions -----------------------------------
     def reset(self):
@@ -117,7 +121,13 @@ class dataFile(object):
         return None
     
     def swap_axes(self):
+        '''
+        仅用作画图时使用, 否则会导致数据处理出现逻辑性错误
+        画图前后应各使用一次
+        '''
         self.Xdata, self.Ydata = self.Ydata, self.Xdata
+        self.Xname, self.Yname = self.Yname, self.Xname
+        self.x_scaling, self.y_scaling = self.y_scaling, self.x_scaling
         return None
     
     def xderiv(self):
@@ -129,12 +139,13 @@ class dataFile(object):
         
         return None
 
-    def plot_heatmap(self, vmin=None, vmax=None, cmin=0, cmax=1, gamma=1, figsize=(6,4), show=False):
+    def plot_heatmap(self, vmin=None, vmax=None, cmin=0, cmax=1, gamma=1, figsize=(6,4), show=False, swap_axes=False):
         '''
         画出X,Y,Z的heatmap, 可指定colormap的一系列参数, 可指定画布大小
         若希望对图像做后续操作, 如添加辅助线等, 可以将show置为False(默认值), 并在函数外操作
         特别的, jupyter notebook的Cell结束时会自动show所有的图, 所以使用jupyter notebook时不用特别把show置为True
         '''
+        if swap_axes: self.swap_axes()
         cmap_generator = colormap.Colormap('Seismic.npy',
                                             min=cmin, max=cmax, gamma=gamma)
         fig, ax = plt.subplots(1, 1, figsize=figsize, dpi=120)
@@ -148,6 +159,7 @@ class dataFile(object):
 
         # 如果想对图像做后续操作, 如添加辅助线等, 可以将show置为False, 并在函数外操作
         if show: plt.show()
+        if swap_axes: self.swap_axes()
 
         return fig, ax
 
@@ -285,16 +297,56 @@ class dataFile(object):
         self.comments = comments
         return None
 
-    def get_shape_and_names(self):
-        lines = self.comments
-        self.y_len = int(lines[1][6][8:])
-        self.x_len = int(lines[2][6][8:])
-        self.Xname = lines[self.column_x_index][4][8:][:-1] # [4]选出name所在行, [8:]去掉前缀, [:-1]去掉末尾的\n
-        self.Yname = lines[self.column_y_index][4][8:][:-1] # [4]选出name所在行, [8:]去掉前缀, [:-1]去掉末尾的\n
-        self.Zname = lines[self.column_z_index][4][8:][:-1] # [4]选出name所在行, [8:]去掉前缀, [:-1]去掉末尾的\n
+    def get_data_shape(self):
+        self.y_len = int(self.comments[1][6][8:])
+        self.x_len = int(self.comments[2][6][8:])
+        # self.Xname = lines[self.column_x_index][4][8:][:-1] # [4]选出name所在行, [8:]去掉前缀, [:-1]去掉末尾的\n
+        # self.Yname = lines[self.column_y_index][4][8:][:-1] # [4]选出name所在行, [8:]去掉前缀, [:-1]去掉末尾的\n
+        # self.Zname = lines[self.column_z_index][4][8:][:-1] # [4]选出name所在行, [8:]去掉前缀, [:-1]去掉末尾的\n
         
         return None
     
+    def get_column_names(self):
+        column_names = ['zero_column'] # 放一个0列的列名, 这样方便后面对其列名, 第i列就是column_names[i]
+
+        # 下面从comments中得到列名
+        for i in range(self.num_columns):
+            column_names.append(self.comments[i+1][4][8:][:-1]) # [4]选出name所在行, [8:]去掉前缀, [:-1]去掉末尾的\n, 注意i+1
+        
+        # 分别特别命名XYZ的names
+        self.Xname = column_names[self.column_x_index]
+        self.Yname = column_names[self.column_y_index]
+        self.Zname = column_names[self.column_z_index]
+        self.column_names = column_names
+
+        return None
+    
+    def format_all_data(self):
+        '''
+        从self.df中提取所有列的数据并格式化为data_shape
+        '''
+        all_data = []
+        all_data.append(np.full(self.data_shape, np.nan)) # 放一个0列的数据, 这样方便后面对其列名, 第i列数据就是all_data[i]
+        for i in range(self.num_columns):
+            all_data.append(self.df.iloc[:, i].to_numpy().reshape(self.data_shape))
+
+        self.all_data = all_data
+        self.Xdata = self.all_data[self.column_x_index]
+        self.Ydata = self.all_data[self.column_y_index]
+        self.Zdata = self.all_data[self.column_z_index]
+
+        return None
+
+    def print_column_names(self):
+        for i, string in enumerate(self.column_names):
+            # 使用字符串的长度作为对齐宽度
+            print(f"{i:^{len(string) + 1}}", end=" ")
+        print()  # 换行
+
+        print(", ".join(self.column_names))
+
+        return None
+            
     def write_Rc_in(self, file=None):
         if file is None:
             file = self.directory + self.file_name + '_Rc.txt'
