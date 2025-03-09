@@ -24,6 +24,7 @@ class dataFile(object):
         - 除了bias的数据单位默认为mV(由于1000:1分压)以外其他物理量都是标准单位制
         - process data 模块前的所有函数不会对数据做任何处理, 只读取和整理数据
         - 处理任何数据都是append一列新的数据到self.all_data, 并更新表头、列数、comments信息, 更新XYZdata
+        - 为了使用索引方便而引入了第0列空数据和列名, 但这导致了len(self.all_data) = len(self.column_names) = self.num_columns + 1
         '''
         self.directory = directory
         self.file = file
@@ -69,7 +70,7 @@ class dataFile(object):
         self.print_column_names()
         if plot: self.plot_heatmap()
 
-# ------------------------------- Basic functions -----------------------------------
+# -------------------------------- Basic functions --------------------------------
 
     def reset(self):
         self.__init__(self.directory, self.file, 
@@ -95,7 +96,52 @@ class dataFile(object):
             y_slice.append(self.idx_y(y))
         return y_slice
 
-# --------------------------------------- plot ---------------------------------------------
+    def change_X(self, index):
+        '''重新指定 X data 为某列数据'''
+        # 有时候会使用负数索引, 例如-1, 这一句代码保证给出的column_x_index总是正数
+        self.column_x_index = (index + len(self.all_data)) % len(self.all_data)
+        self.Xdata = self.all_data[self.column_x_index]
+
+        print('X axis is now [{}]:[{}]'.format(self.column_x_index, self.column_names[self.column_x_index]))
+
+        return None
+
+    def change_Y(self, index):
+        '''重新指定 Y data 为某列数据'''
+        self.column_y_index = (index + len(self.all_data)) % len(self.all_data)
+        self.Ydata = self.all_data[self.column_y_index]
+
+        print('Y axis is now [{}]:[{}]'.format(self.column_y_index, self.column_names[self.column_y_index]))
+
+        return None
+
+    def change_Z(self, index):
+        '''重新指定 Z data 为某列数据'''
+        self.column_z_index = (index + len(self.all_data)) % len(self.all_data)
+        self.Zdata = self.all_data[self.column_z_index]
+
+        print('Z axis is now [{}]:[{}]'.format(self.column_z_index, self.column_names[self.column_z_index]))
+        
+        return None
+
+    def change_XYZ(self, column_x_index, column_y_index, column_z_index):
+        '''重新指定 XYZ data 为某列数据'''
+        
+        # 先计算对应的正数索引, 再按照索引指定XYZ data; 注意到这里考虑了索引为负数的情况
+        self.column_x_index = (column_x_index + len(self.all_data)) % len(self.all_data)
+        self.column_y_index = (column_y_index + len(self.all_data)) % len(self.all_data)
+        self.column_z_index = (column_z_index + len(self.all_data)) % len(self.all_data)
+        self.Xdata = self.all_data[self.column_x_index]
+        self.Ydata = self.all_data[self.column_y_index]
+        self.Zdata = self.all_data[self.column_z_index]
+
+        print('X axis is now [{}]:[{}]'.format(self.column_x_index, self.column_names[self.column_x_index]))
+        print('Y axis is now [{}]:[{}]'.format(self.column_y_index, self.column_names[self.column_y_index]))
+        print('Z axis is now [{}]:[{}]'.format(self.column_z_index, self.column_names[self.column_z_index]))
+
+        return None
+    
+# ----------------------------------- plot -------------------------------------
 
     def interp(self, x_interp=None, multiplier=1, interp_kind='linear'):
         '''
@@ -131,15 +177,16 @@ class dataFile(object):
         self.x_scaling, self.y_scaling = self.y_scaling, self.x_scaling
         return None
 
-    def plot_heatmap(self, vmin=None, vmax=None, cmin=0, cmax=1, gamma=1, figsize=(6,4), show=False, swap_axes=False):
+    def plot_heatmap(self, cmap='Seismic', vmin=None, vmax=None, cmin=0, cmax=1, gamma=1, figsize=(6,4), show=False, swap_axes=False):
         '''
         画出X,Y,Z的heatmap, 可指定colormap的一系列参数, 可指定画布大小
         若希望对图像做后续操作, 如添加辅助线等, 可以将show置为False(默认值), 并在函数外操作
         特别的, jupyter notebook的Cell结束时会自动show所有的图, 所以使用jupyter notebook时不用特别把show置为True
         '''
         if swap_axes: self.swap_axes()
-        cmap_generator = colormap.Colormap('Seismic.npy',
-                                            min=cmin, max=cmax, gamma=gamma)
+
+        cmap_generator = colormap.Colormap(cmap + '.npy',
+                                           min=cmin, max=cmax, gamma=gamma)
         fig, ax = plt.subplots(1, 1, figsize=figsize, dpi=120)
         ax0 = ax.pcolormesh(self.Xdata*self.x_scaling, self.Ydata*self.y_scaling, self.Zdata*self.z_scaling, 
                                 cmap=cmap_generator.get_mpl_colormap(), shading='nearest')
@@ -151,6 +198,7 @@ class dataFile(object):
 
         # 如果想对图像做后续操作, 如添加辅助线等, 可以将show置为False, 并在函数外操作
         if show: plt.show()
+
         if swap_axes: self.swap_axes()
 
         return fig, ax
@@ -167,7 +215,7 @@ class dataFile(object):
 
         return fig, ax
 
-# ------------------------------- Write and read files -----------------------------------
+# ----------------------------- Write and read files -------------------------------
 
     def get_head_comments(self):
         comments = []
@@ -211,7 +259,8 @@ class dataFile(object):
         return None
     
     def get_column_names(self):
-        column_names = ['zero_column'] # 放一个0列的列名, 这样方便后面对其列名, 第i列就是column_names[i]
+        # 放一个0列的列名, 这样方便后面对其列名, 第i列就是column_names[i]
+        column_names = ['zero_column']
 
         # 下面从comments中得到列名
         for i in range(self.num_columns):
@@ -307,7 +356,7 @@ class dataFile(object):
 
         return None
 
-# ----------------------------------- append ---------------------------------------
+# ---------------------------------- append ------------------------------------
 
     def append(self, new_data):
         '''
@@ -394,30 +443,13 @@ class dataFile(object):
 
         return None
 
-# ----------------------------------- process data ---------------------------------------
+# ------------------------------- process data ---------------------------------
 
 # Principal for this module:
 # - functions before this module do not change/create/delete any data
 # - 这个模块不修改原始数据, 处理产生的数据是新数据
 # - 产生新数据后必须更新data info, 即更新all_data, column_names, num_columns和comments
 # - 产生新数据后需手动self.change_XYZ()
-
-    def change_XYZ(self, axis, index):
-        '''
-        每次处理出新数据可以把新数据更新到XYZ的某条轴上
-        e.g. self.change_XYZ('X', -1)
-        '''
-        if axis is 'X':
-            self.Xdata = self.all_data[index]
-            self.column_x_index = index
-        elif axis is 'Y':
-            self.Ydata = self.all_data[index]
-            self.column_y_index = index
-        elif axis is 'Z':
-            self.Zdata = self.all_data[index]
-            self.column_z_index = index
-        
-        return None
 
     def update_data_info(self, data, name):
         '''
@@ -447,7 +479,7 @@ class dataFile(object):
         # 计算sample bias
         bias = self.all_data[bias_column_idx]
         current = self.all_data[current_volt_column_idx] / current_amplifier_factor
-        sample_bias_data = bias - filter_bias(current) - current*Rc*1e3 - true_zero_bias*1e3
+        sample_bias_data = bias - filter_bias(current) - current*Rc*1e3 - true_zero_bias
         
         # 更新数据信息
         self.update_data_info(sample_bias_data, 'sample bias (mV)')
@@ -455,7 +487,7 @@ class dataFile(object):
         return None
 
     def calculate_differential_conductance(self, sr1_X_column_idx, current_volt_column_idx, 
-                                           current_amplifier_factor, R_filter, Rc, excitation):
+                                           excitation, current_amplifier_factor, R_filter, Rc):
         '''
         - excitation is usually 20e-6
         - current amplifier factor is usually 1e6
@@ -475,7 +507,7 @@ class dataFile(object):
 
 
 
-    
+# ***********************************************************************************************************************************
 
 class filter_IV(dataFile):
     def __init__(self, directory, file, 
