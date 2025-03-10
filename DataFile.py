@@ -260,7 +260,7 @@ class dataFile(object):
     
     def get_column_names(self):
         # 放一个0列的列名, 这样方便后面对其列名, 第i列就是column_names[i]
-        column_names = ['zero_column']
+        column_names = ['Nan']
 
         # 下面从comments中得到列名
         for i in range(self.num_columns):
