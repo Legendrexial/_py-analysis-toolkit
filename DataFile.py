@@ -143,6 +143,17 @@ class dataFile(object):
     
 # ----------------------------------- plot -------------------------------------
 
+    def croptblr(self, top=0, bottom=None, left=0, right=None):
+        '''
+        - crop是一个非常特殊的操作, 它不是数据处理, 不产生新的数据
+        - crop应该放在所有的数据处理过程完成之后, 仅用于画图之前!
+        '''
+        self.Xdata = self.Xdata[top:bottom, left:right]
+        self.Ydata = self.Ydata[top:bottom, left:right]
+        self.Zdata = self.Zdata[top:bottom, left:right]
+        
+        return None
+    
     def interp(self, x_interp=None, multiplier=1, interp_kind='linear'):
         '''
         - interpolation是一个非常特殊的操作, 它不是数据处理, 不产生新的数据
@@ -260,7 +271,7 @@ class dataFile(object):
     
     def get_column_names(self):
         # 放一个0列的列名, 这样方便后面对其列名, 第i列就是column_names[i]
-        column_names = ['Nan']
+        column_names = ['nan']
 
         # 下面从comments中得到列名
         for i in range(self.num_columns):
@@ -495,9 +506,12 @@ class dataFile(object):
         sr1_X = self.all_data[sr1_X_column_idx]
         current = self.all_data[current_volt_column_idx] / current_amplifier_factor
 
-        # 计算微分电阻和微分电导
-        dvdi = excitation/(sr1_X/current_amplifier_factor) - Rc - R_filter(current) # Ohm
-        didv = 1 / dvdi / self.G0 # unit: 2e^2/h
+        # 计算微分电阻和微分电导, 这样计算的好处是不会出现除以0的情况
+        series_resistance = R_filter(current) + Rc
+        di = sr1_X/current_amplifier_factor # A
+        dv = excitation - series_resistance*di # V
+        didv = di/dv/self.G0 # 2e^2/h
+
 
         # 更新数据信息
         self.update_data_info(didv, 'dI/dV (2e^2/h)')
@@ -597,3 +611,13 @@ class filter_IR(dataFile):
         plt.show()
         return None
     
+    
+class constant_resistance_filter(object):
+    def __init__(self, resistance):
+        self.resistance = resistance
+
+    def IV_func(self):
+        return lambda current: self.resistance*current*1e3 # mV
+    
+    def IR_func(self):
+        return lambda current: 3700 # Ohm
