@@ -17,14 +17,17 @@ class dataFile(object):
     def __init__(self, directory, file,
                  column_x_index=2, column_y_index=1, column_z_index=3,
                  Xname=None, Yname=None, Zname=None, x_scaling=1, y_scaling=1, z_scaling=1,
-                 data_shape=None,
+                 init_data_shape=None,
                  plot=True,):
         '''
         原则:
         - 除了bias的数据单位默认为mV(由于1000:1分压)以外其他物理量都是标准单位制
         - process data 模块前的所有函数不会对数据做任何处理, 只读取和整理数据
-        - 处理任何数据都是append一列新的数据到self.all_data, 并更新表头、列数、comments信息, 更新XYZdata
-        - 为了使用索引方便而引入了第0列空数据和列名, 但这导致了len(self.all_data) = len(self.column_names) = self.num_columns + 1
+        - 处理任何数据都是append一列新的数据到self.all_data, 并更新表头、comments信息; 如果需要, 手动改变XYZ轴
+        - 为了使用索引方便而引入了第0列空数据和列名, 但这导致了len(self.all_data) = len(self.column_names) = self.num_columns() + 1
+        - 一旦读取完数据之后, 所有需要的数据信息都随时从数据本身获取(例如 self.y_box() ), 而不再提前指定好,
+          这是为了避免对数据做各种处理时还要考虑数据信息的更新
+        - 所有的处理应该时刻保持 XYZdata 是指向all_data某列数据的指针
         '''
         self.directory = directory
         self.file = file
@@ -37,19 +40,14 @@ class dataFile(object):
 
         # 提取数据, 提取表头所有的注释并从中读取data shape和列名, 并据此格式化每一列数据
         self.df = pd.read_csv(self.file_path, delimiter='\t', comment='#', header=None)
-        self.num_columns = self.df.shape[1]
+        self.init_num_columns = self.df.shape[1]
         self.get_comments()
         self.get_column_names()
-        self.get_data_shape() 
-        if data_shape is not None: self.y_len, self.x_len = data_shape
-        self.data_shape = (self.y_len, self.x_len)
-        self.format_all_data()
 
-        # 提取一些基本的数据信息用于后续处理
-        self.xmax = np.max(abs(self.Xdata))
-        self.xmin = np.min(abs(self.Xdata))
-        self.y_box = self.Ydata[:, 0]
-        self.y_step = (self.y_box.max() - self.y_box.min()) / (len(self.y_box)-1)
+        self.get_init_data_shape() 
+        if init_data_shape is not None: self.init_y_len, self.init_x_len = init_data_shape
+        self.init_data_shape = (self.init_y_len, self.init_x_len)
+        self.format_all_data()
 
         # 如果制定了name就按照指定的来, 如果没有指定, 前面的self.get_column_names()已经自动识别了name
         if Xname is not None: 
@@ -70,22 +68,112 @@ class dataFile(object):
         self.print_column_names()
         if plot: self.plot_heatmap()
 
-# -------------------------------- Basic functions --------------------------------
+# -------------------------------- initiate dataFile --------------------------------
 
-    def reset(self):
-        self.__init__(self.directory, self.file, 
-                      self.column_x_index, self.column_y_index, self.column_z_index,
-                      self.Xname, self.Yname, self.Zname, self.x_scaling, self.y_scaling, self.z_scaling)
+    def get_head_comments(self):
+        comments = []
+        with open(self.file_path, 'r') as file:
+            for i in range(6):
+                comments.append(file.readline())
+        return comments
+
+    def get_comments_of_column(self, n):
+        comments = []
+        start_line = 7 + 14*(n - 1) # 第一个column开头是第7行, 之后每个column占14行
+
+        with open(self.file_path, 'r') as file:
+            # start line前面的行不读
+            for i in range(start_line - 1):
+                file.readline()
+            # 从start line开始往后读14行
+            for i in range(14):
+                comments.append(file.readline())
+        
+        return comments
+    
+    def get_comments(self):
+        comments = []
+        
+        # 读取全部表头注释
+        comments.append(self.get_head_comments()) # head comments
+        for i in range(self.init_num_columns): # comments for every column
+            comments.append(self.get_comments_of_column(i + 1))
+
+        self.comments = comments
         return None
 
-    def idx_y(self, y): # find the index of y in y_box
-        return np.where(np.isclose(self.y_box, y, atol=self.y_step/10)==True)[0][0]
+    def get_init_data_shape(self):
+        self.init_y_len = int(self.comments[1][6][8:])
+        self.init_x_len = int(self.comments[2][6][8:])
+        
+        return None
     
-    def y_list(self, y_slice):
+    def get_column_names(self):
+        # 放一个0列的列名, 这样方便后面对其列名, 第i列就是column_names[i]
+        column_names = ['nan']
+
+        # 下面从comments中得到列名
+        for i in range(self.init_num_columns):
+            column_names.append(self.comments[i+1][4][8:][:-1]) # [4]选出name所在行, [8:]去掉前缀, [:-1]去掉末尾的\n, 注意i+1
+        
+        # 分别特别命名XYZ的names
+        self.Xname = column_names[self.column_x_index]
+        self.Yname = column_names[self.column_y_index]
+        self.Zname = column_names[self.column_z_index]
+        self.column_names = column_names
+
+        return None
+    
+    def format_all_data(self):
         '''
-        给定几个y值的索引, 生成这几个y值
+        从self.df中提取所有列的数据并格式化为init_data_shape
         '''
-        return self.y_box[y_slice]
+        all_data = []
+        all_data.append(np.full(self.init_data_shape, np.nan)) # 放一个0列的数据, 这样方便后面对其列名, 第i列数据就是all_data[i]
+        for i in range(self.init_num_columns):
+            all_data.append(self.df.iloc[:, i].to_numpy().reshape(self.init_data_shape))
+
+        self.all_data = all_data
+        self.Xdata = self.all_data[self.column_x_index]
+        self.Ydata = self.all_data[self.column_y_index]
+        self.Zdata = self.all_data[self.column_z_index]
+
+        return None
+
+    def print_column_names(self):
+        for i, string in enumerate(self.column_names):
+            # 使用字符串的长度作为对齐宽度
+            print(f"{i:^{len(string) + 1}}", end=" ")
+        print()  # 换行
+
+        print(", ".join(self.column_names))
+
+        return None
+ 
+# -------------------------------- get data info --------------------------------
+
+    def y_box(self):
+        return np.copy(self.Ydata[:, 0])
+    
+    def y_step(self):
+        return (self.y_box().max() - self.y_box().min()) / (len(self.y_box())-1)
+
+    def data_shape(self):
+        return self.Xdata.shape
+    
+    def y_len(self):
+        return self.data_shape()[0]
+    
+    def x_len(self):
+        return self.data_shape()[1]
+
+    def num_columns(self):
+        return len(self.all_data) - 1
+
+# -------------------------------- Basic functions --------------------------------
+
+    def idx_y(self, y): # find the index of y in y_box
+        return np.where(np.isclose(self.y_box(), y, atol=self.y_step()/10)==True)[0][0]
     
     def y_slice(self, y_list):
         '''
@@ -148,10 +236,16 @@ class dataFile(object):
         - crop是一个非常特殊的操作, 它不是数据处理, 不产生新的数据
         - crop应该放在所有的数据处理过程完成之后, 仅用于画图之前!
         '''
-        self.Xdata = self.Xdata[top:bottom, left:right]
-        self.Ydata = self.Ydata[top:bottom, left:right]
-        self.Zdata = self.Zdata[top:bottom, left:right]
+        # 由于取slice操作会重新分配内存地址, 导致一系列指针问题, 所以就直接重新搞一套all_data
+        cropped_all_data = []
+        for data in self.all_data:
+            cropped_all_data.append(data[top:bottom, left:right])
         
+        self.all_data = cropped_all_data
+        self.Xdata = self.all_data[self.column_x_index]
+        self.Ydata = self.all_data[self.column_y_index]
+        self.Zdata = self.all_data[self.column_z_index]
+
         return None
     
     def interp(self, x_interp=None, multiplier=1, interp_kind='linear'):
@@ -160,12 +254,12 @@ class dataFile(object):
         - interpolation应该放在所有的数据处理过程完成之后, 仅用于画图之前!
         '''
         if x_interp is None: # if x_interp is not given, then use self x_interp
-            x_interp=np.linspace(self.xmin, self.xmax, self.x_len*multiplier)
+            x_interp=np.linspace(np.min(abs(self.Xdata)), np.max(abs(self.Xdata)), self.x_len()*multiplier)
 
         self.x_interp = x_interp
-        self.Zdata_interp = np.full((self.y_len, len(x_interp)), np.nan)
-        self.Xdata_interp = np.tile(x_interp, (self.y_len, 1))
-        self.Ydata_interp = np.tile(self.y_box, (len(x_interp), 1)).T
+        self.Zdata_interp = np.full((self.y_len(), len(x_interp)), np.nan)
+        self.Xdata_interp = np.tile(x_interp, (self.y_len(), 1))
+        self.Ydata_interp = np.tile(self.y_box(), (len(x_interp), 1)).T
 
         for i,x in enumerate(self.Xdata):
             z = self.Zdata[i].copy() # copy a zdata
@@ -226,91 +320,50 @@ class dataFile(object):
 
         return fig, ax
 
-# ----------------------------- Write and read files -------------------------------
+    def plot_linecuts(self, y_slice=[], y_list=None, z_shift=0, 
+                      mark_y=True, mark_alpha=0.5, show=False, figsize=(14, 4),
+                      cmap='Seismic', xlim=(None, None), zlim=(None, None), vmin=None, vmax=None, cmin=0, cmax=1, gamma=1):
+            '''
+            - 请使用 range(m, n ,q) 或 [i, j, k] 来给出 y_slice
+            - 若给出 y_list, 则会覆盖 y_slice
+            '''
+            if y_list is not None: y_slice = self.y_slice(y_list)
 
-    def get_head_comments(self):
-        comments = []
-        with open(self.file_path, 'r') as file:
-            for i in range(6):
-                comments.append(file.readline())
-        return comments
-
-    def get_comments_of_column(self, n):
-        comments = []
-        start_line = 7 + 14*(n - 1) # 第一个column开头是第7行, 之后每个column占14行
-
-        with open(self.file_path, 'r') as file:
-            # start line前面的行不读
-            for i in range(start_line - 1):
-                file.readline()
-            # 从start line开始往后读14行
-            for i in range(14):
-                comments.append(file.readline())
-        
-        return comments
-    
-    def get_comments(self):
-        comments = []
-        
-        # 读取全部表头注释
-        comments.append(self.get_head_comments()) # head comments
-        for i in range(self.num_columns): # comments for every column
-            comments.append(self.get_comments_of_column(i + 1))
-
-        self.comments = comments
-        return None
-
-    def get_data_shape(self):
-        self.y_len = int(self.comments[1][6][8:])
-        self.x_len = int(self.comments[2][6][8:])
-        # self.Xname = lines[self.column_x_index][4][8:][:-1] # [4]选出name所在行, [8:]去掉前缀, [:-1]去掉末尾的\n
-        # self.Yname = lines[self.column_y_index][4][8:][:-1] # [4]选出name所在行, [8:]去掉前缀, [:-1]去掉末尾的\n
-        # self.Zname = lines[self.column_z_index][4][8:][:-1] # [4]选出name所在行, [8:]去掉前缀, [:-1]去掉末尾的\n
-        
-        return None
-    
-    def get_column_names(self):
-        # 放一个0列的列名, 这样方便后面对其列名, 第i列就是column_names[i]
-        column_names = ['nan']
-
-        # 下面从comments中得到列名
-        for i in range(self.num_columns):
-            column_names.append(self.comments[i+1][4][8:][:-1]) # [4]选出name所在行, [8:]去掉前缀, [:-1]去掉末尾的\n, 注意i+1
-        
-        # 分别特别命名XYZ的names
-        self.Xname = column_names[self.column_x_index]
-        self.Yname = column_names[self.column_y_index]
-        self.Zname = column_names[self.column_z_index]
-        self.column_names = column_names
-
-        return None
-    
-    def format_all_data(self):
-        '''
-        从self.df中提取所有列的数据并格式化为data_shape
-        '''
-        all_data = []
-        all_data.append(np.full(self.data_shape, np.nan)) # 放一个0列的数据, 这样方便后面对其列名, 第i列数据就是all_data[i]
-        for i in range(self.num_columns):
-            all_data.append(self.df.iloc[:, i].to_numpy().reshape(self.data_shape))
-
-        self.all_data = all_data
-        self.Xdata = self.all_data[self.column_x_index]
-        self.Ydata = self.all_data[self.column_y_index]
-        self.Zdata = self.all_data[self.column_z_index]
-
-        return None
-
-    def print_column_names(self):
-        for i, string in enumerate(self.column_names):
-            # 使用字符串的长度作为对齐宽度
-            print(f"{i:^{len(string) + 1}}", end=" ")
-        print()  # 换行
-
-        print(", ".join(self.column_names))
-
-        return None
+            cmap_generator = colormap.Colormap(cmap + '.npy',
+                                                min=cmin, max=cmax, gamma=gamma)
+            fig, axs = plt.subplots(1, 2, figsize=figsize, dpi=100)
+            fig.set_facecolor('white')
             
+            y_box = self.y_box()
+            for i, idx_y in enumerate(y_slice):
+                c = 'C' + str(i) # unify colors
+                axs[0].plot(self.Xdata[idx_y]*self.x_scaling, self.Zdata[idx_y]*self.z_scaling + idx_y*z_shift, 
+                            label='y={:.3g}, idx_y={}'.format(y_box[idx_y], idx_y), lw=0.5, c=c)
+                if mark_y: axs[1].axvline(y_box[idx_y]*self.y_scaling, ls='--', 
+                                          label='idx_y = {}'.format(idx_y), lw=1, c=c, alpha=mark_alpha)
+            ax0 = axs[1].pcolormesh(self.Ydata*self.y_scaling, self.Xdata*self.x_scaling, self.Zdata*self.z_scaling, 
+                                    cmap=cmap_generator.get_mpl_colormap(), shading='nearest')
+            axs[0].set_xlabel(self.Xname)
+            axs[0].set_ylabel(self.Zname)
+            axs[0].set_title(self.file)
+            axs[1].set_xlabel(self.Yname)
+            axs[1].set_ylabel(self.Xname)
+            axs[1].set_title(self.file)
+            axs[0].legend(bbox_to_anchor=(0, 1), loc=2, prop={'size': 8}, framealpha=0.3)
+
+            axs[0].set_xlim(*xlim) # Zoom in
+            axs[1].set_ylim(*xlim)
+            axs[0].set_ylim(*zlim)
+            ax0.set_norm(mpl.colors.Normalize(vmin=vmin, vmax=vmax))
+
+            fig.colorbar(ax0, ax=axs[1], label=self.Zname)
+
+            if show: plt.show()
+
+            return fig, axs
+
+# ----------------------------- Write and read files -------------------------------
+           
     def write_Rc_in(self, file=None):
         if file is None:
             file = self.directory + self.file_name + '_Rc.txt'
@@ -367,109 +420,21 @@ class dataFile(object):
 
         return None
 
-# ---------------------------------- append ------------------------------------
-
-    def append(self, new_data):
-        '''
-        沿y轴添加新的数据, 用于拼接多次扫描的数据, 如果新数据沿x方向的长度和本数据不相等, 把短的数据用np.nan补齐;
-        这样补齐之后就无法用self,linecuts()画出2D了, 只能用self.interp_linecuts();
-        不改变new_data.data, 只改变self.data
-        '''
-        new_ylen, new_xlen = new_data.data_shape
-        
-        if new_xlen < self.x_len: # 如果新数据比较短
-            nan_len = self.x_len - new_xlen
-            X = np.pad(new_data.Xdata, ((0, 0), (0, nan_len)), mode='constant', constant_values=np.nan) # 先把新数据用nan补齐
-            Y = np.pad(new_data.Ydata, ((0, 0), (0, nan_len)), mode='constant', constant_values=np.nan) # 先把新数据用nan补齐
-            Z = np.pad(new_data.Zdata, ((0, 0), (0, nan_len)), mode='constant', constant_values=np.nan) # 先把新数据用nan补齐
-        elif new_xlen > self.x_len: # 如果新数据比较长
-            nan_len = new_xlen - self.x_len
-            self.Xdata = np.pad(self.Xdata, ((0, 0), (0, nan_len)), mode='constant', constant_values=np.nan) # 先把本数据用nan补齐
-            self.Ydata = np.pad(self.Ydata, ((0, 0), (0, nan_len)), mode='constant', constant_values=np.nan) # 先把本数据用nan补齐
-            self.Zdata = np.pad(self.Zdata, ((0, 0), (0, nan_len)), mode='constant', constant_values=np.nan) # 先把本数据用nan补齐
-            X, Y, Z = new_data.Xdata, new_data.Ydata, new_data.Zdata
-        else: # 两个数据一样长
-            X, Y, Z = new_data.Xdata, new_data.Ydata, new_data.Zdata
-
-        # 拼接
-        self.Xdata = np.concatenate((self.Xdata, X), axis=0)
-        self.Ydata = np.concatenate((self.Ydata, Y), axis=0)
-        self.Zdata = np.concatenate((self.Zdata, Z), axis=0)
-
-        # mask value
-        if new_xlen != self.x_len:
-            self.Xdata = np.ma.masked_array(self.Xdata)
-            self.Ydata = np.ma.masked_array(self.Ydata)
-            self.Zdata = np.ma.masked_array(self.Zdata)
-
-        # 更新参数
-        self.data_shape = np.shape(self.Xdata)
-        self.y_len, self.x_len = self.data_shape
-        self.y_box = self.Ydata[:, 0]
-        self.xmax = np.max(abs(self.Xdata))
-
-        return None
-    
-    def left_interpend(self, new_data):
-        x_interp = self.Xdata[0]
-        new_Xdata = np.tile(x_interp, (new_data.y_len, 1))
-        new_Ydata = np.tile(new_data.y_box, (len(x_interp), 1)).T
-        new_Zdata = np.full((new_data.y_len, len(x_interp)), np.nan)
-
-        for i,x in enumerate(new_data.Xdata):
-            new_Zdata[i] = interp1d(x, new_data.Zdata[i], bounds_error=False, fill_value=np.nan)(x_interp)
-
-        # 拼接
-        self.Xdata = np.vstack((new_Xdata, self.Xdata))
-        self.Ydata = np.vstack((new_Ydata, self.Ydata))
-        self.Zdata = np.vstack((new_Zdata, self.Zdata))
-
-        # 更新参数
-        self.data_shape = np.shape(self.Xdata)
-        self.y_len, self.x_len = self.data_shape
-        self.y_box = self.Ydata[:, 0]
-        self.xmax = np.max(abs(self.Xdata))
-
-        return None
-    
-    def right_interpend(self, new_data):
-        x_interp = self.Xdata[-1]
-        new_Xdata = np.tile(x_interp, (new_data.y_len, 1))
-        new_Ydata = np.tile(new_data.y_box, (len(x_interp), 1)).T
-        new_Zdata = np.full((new_data.y_len, len(x_interp)), np.nan)
-
-        for i,x in enumerate(new_data.Xdata):
-            new_Zdata[i] = interp1d(x, new_data.Zdata[i], bounds_error=False, fill_value=np.nan)(x_interp)
-
-       # 拼接
-        self.Xdata = np.vstack((self.Xdata, new_Xdata))
-        self.Ydata = np.vstack((self.Ydata, new_Ydata))
-        self.Zdata = np.vstack((self.Zdata, new_Zdata))
-
-        # 更新参数
-        self.data_shape = np.shape(self.Xdata)
-        self.y_len, self.x_len = self.data_shape
-        self.y_box = self.Ydata[:, 0]
-        self.xmax = np.max(abs(self.Xdata))
-
-        return None
-
 # ------------------------------- process data ---------------------------------
 
 # Principal for this module:
 # - functions before this module do not change/create/delete any data
 # - 这个模块不修改原始数据, 处理产生的数据是新数据
-# - 产生新数据后必须更新data info, 即更新all_data, column_names, num_columns和comments
+# - 产生新数据后必须更新data info, 即更新all_data, column_names和comments
 # - 产生新数据后需手动self.change_XYZ()
 
-    def update_data_info(self, data, name):
+    def add_data_column(self, data, name):
         '''
         每次处理出新数据都要update数据信息
         '''
         # column信息
         self.all_data.append(data)
         self.column_names.append(name)
-        self.num_columns += 1
 
         self.print_column_names()
 
@@ -493,7 +458,7 @@ class dataFile(object):
         sample_bias_data = bias - filter_bias(current) - current*Rc*1e3 - true_zero_bias
         
         # 更新数据信息
-        self.update_data_info(sample_bias_data, 'sample bias (mV)')
+        self.add_data_column(sample_bias_data, 'sample bias (mV)')
 
         return None
 
@@ -514,12 +479,10 @@ class dataFile(object):
 
 
         # 更新数据信息
-        self.update_data_info(didv, 'dI/dV (2e^2/h)')
+        self.add_data_column(didv, 'dI/dV (2e^2/h)')
 
         return None
     
-
-
 
 # ***********************************************************************************************************************************
 
