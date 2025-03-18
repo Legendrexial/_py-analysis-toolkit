@@ -1,16 +1,11 @@
-import pandas as pd
-import matplotlib.pyplot as plt
-import matplotlib as mpl
-from scipy import integrate
-from scipy.interpolate import interp1d
-from scipy.signal import find_peaks
-from scipy.signal import savgol_filter
-from scipy.optimize import root
-from scipy.fft import fft, ifft, fftshift, fftfreq
-from scipy.signal import hilbert
 import os
-import pandas as pd
 import numpy as np
+import pandas as pd
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+from scipy.signal import savgol_filter
+from scipy.interpolate import interp1d
+
 import colormap
 
 class dataFile(object):
