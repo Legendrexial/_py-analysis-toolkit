@@ -13,6 +13,8 @@ furnished to do so, subject to the following conditions:
 The above copyright notice and this permission notice shall be included in all
 copies or substantial portions of the Software.
 
+This software includes code that was inspired by or adapted from the work of 王照宇.
+
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -37,13 +39,15 @@ class dataFile(object):
                  column_x_index=2, column_y_index=1, column_z_index=3,
                  Xname=None, Yname=None, Zname=None, x_scaling=1, y_scaling=1, z_scaling=1,
                  init_data_shape=None,
+                 sort_y_ascending=True,
                  plot=True,):
         '''
         原则:
         - 除了bias的数据单位默认为mV(由于1000:1分压)以外其他物理量都是标准单位制
         - process data 模块前的所有函数不会对数据做任何处理, 只读取和整理数据
         - 处理任何数据都是append一列新的数据到self.all_data, 并更新表头、comments信息; 如果需要, 手动改变XYZ轴
-        - 为了使用索引方便而引入了第0列空数据和列名, 但这导致了len(self.all_data) = len(self.column_names) = self.num_columns() + 1
+        - 为了使用索引方便而引入了第0列空数据和列名, 
+          但这导致了len(self.all_data) = len(self.column_names) = self.num_columns() + 1
         - 一旦读取完数据之后, 所有需要的数据信息都随时从数据本身获取(例如 self.y_box() ), 而不再提前指定好,
           这是为了避免对数据做各种处理时还要考虑数据信息的更新
         - 所有的处理应该时刻保持 XYZdata 是指向all_data某列数据的指针
@@ -67,6 +71,8 @@ class dataFile(object):
         if init_data_shape is not None: self.init_y_len, self.init_x_len = init_data_shape
         self.init_data_shape = (self.init_y_len, self.init_x_len)
         self.format_all_data()
+
+        if sort_y_ascending: self.sort_y_ascending()
 
         # 如果制定了name就按照指定的来, 如果没有指定, 前面的self.get_column_names()已经自动识别了name
         if Xname is not None: 
@@ -133,7 +139,8 @@ class dataFile(object):
 
         # 下面从comments中得到列名
         for i in range(self.init_num_columns):
-            column_names.append(self.comments[i+1][4][8:][:-1]) # [4]选出name所在行, [8:]去掉前缀, [:-1]去掉末尾的\n, 注意i+1
+            # [4]选出name所在行, [8:]去掉前缀, [:-1]去掉末尾的\n, 注意i+1
+            column_names.append(self.comments[i+1][4][8:][:-1])
         
         # 分别特别命名XYZ的names
         self.Xname = column_names[self.column_x_index]
@@ -148,7 +155,10 @@ class dataFile(object):
         从self.df中提取所有列的数据并格式化为init_data_shape
         '''
         all_data = []
-        all_data.append(np.full(self.init_data_shape, np.nan)) # 放一个0列的数据, 这样方便后面对其列名, 第i列数据就是all_data[i]
+
+        # 放一个0列的数据, 这样方便后面对其列名, 第i列数据就是all_data[i]
+        all_data.append(np.full(self.init_data_shape, np.nan))
+
         for i in range(self.init_num_columns):
             all_data.append(self.df.iloc[:, i].to_numpy().reshape(self.init_data_shape))
 
@@ -168,7 +178,19 @@ class dataFile(object):
         print(", ".join(self.column_names))
 
         return None
- 
+
+    def sort_y_ascending(self):
+        '''
+        把数据整理成为y轴升序排列的形式
+        '''
+        if self.Ydata[0, 0] > self.Ydata[-1, 0]:
+            self.all_data = [data[::-1] for data in self.all_data]
+            self.Xdata = self.all_data[self.column_x_index]
+            self.Ydata = self.all_data[self.column_y_index]
+            self.Zdata = self.all_data[self.column_z_index]
+            print(f'Y axis is manually sorted in ascending order for {{{self.file}}}')
+        return
+
 # -------------------------------- get data info --------------------------------
 
     def y_box(self):
@@ -209,7 +231,7 @@ class dataFile(object):
         self.column_x_index = (index + len(self.all_data)) % len(self.all_data)
         self.Xdata = self.all_data[self.column_x_index]
 
-        print('X axis is now [{}]:[{}]'.format(self.column_x_index, self.column_names[self.column_x_index]))
+        print(f'X axis is now [{self.column_x_index}]:[{self.column_names[self.column_x_index]}] for {{{self.file}}}')
 
         return None
 
@@ -218,7 +240,7 @@ class dataFile(object):
         self.column_y_index = (index + len(self.all_data)) % len(self.all_data)
         self.Ydata = self.all_data[self.column_y_index]
 
-        print('Y axis is now [{}]:[{}]'.format(self.column_y_index, self.column_names[self.column_y_index]))
+        print(f'Y axis is now [{self.column_y_index}]:[{self.column_names[self.column_y_index]}] for {{{self.file}}}')
 
         return None
 
@@ -227,8 +249,8 @@ class dataFile(object):
         self.column_z_index = (index + len(self.all_data)) % len(self.all_data)
         self.Zdata = self.all_data[self.column_z_index]
 
-        print('Z axis is now [{}]:[{}]'.format(self.column_z_index, self.column_names[self.column_z_index]))
-        
+        print(f'Z axis is now [{self.column_z_index}]:[{self.column_names[self.column_z_index]}] for {{{self.file}}}')
+    
         return None
 
     def change_XYZ(self, column_x_index, column_y_index, column_z_index):
@@ -242,38 +264,30 @@ class dataFile(object):
         self.Ydata = self.all_data[self.column_y_index]
         self.Zdata = self.all_data[self.column_z_index]
 
-        print('X axis is now [{}]:[{}]'.format(self.column_x_index, self.column_names[self.column_x_index]))
-        print('Y axis is now [{}]:[{}]'.format(self.column_y_index, self.column_names[self.column_y_index]))
-        print('Z axis is now [{}]:[{}]'.format(self.column_z_index, self.column_names[self.column_z_index]))
+        print(f'X axis is now [{self.column_x_index}]:[{self.column_names[self.column_x_index]}] for {{{self.file}}}')
+        print(f'Y axis is now [{self.column_y_index}]:[{self.column_names[self.column_y_index]}] for {{{self.file}}}')
+        print(f'Z axis is now [{self.column_z_index}]:[{self.column_names[self.column_z_index]}] for {{{self.file}}}')
 
         return None
     
-# ----------------------------------- plot -------------------------------------
-
-    def croptblr(self, top=0, bottom=None, left=0, right=None):
-        '''
-        - crop是一个非常特殊的操作, 它不是数据处理, 不产生新的数据
-        - crop应该放在所有的数据处理过程完成之后, 仅用于画图之前!
-        '''
+    def cropbtlr(self, bottom=0, top=None, left=0, right=None):
         # 由于取slice操作会重新分配内存地址, 导致一系列指针问题, 所以就直接重新搞一套all_data
-        cropped_all_data = []
-        for data in self.all_data:
-            cropped_all_data.append(data[top:bottom, left:right])
-        
-        self.all_data = cropped_all_data
+        self.all_data = [data[bottom:top, left:right] for data in self.all_data]
         self.Xdata = self.all_data[self.column_x_index]
         self.Ydata = self.all_data[self.column_y_index]
         self.Zdata = self.all_data[self.column_z_index]
 
         return None
     
+# ----------------------------------- plot -------------------------------------
+
     def interp(self, x_interp=None, multiplier=1, interp_kind='linear'):
         '''
         - interpolation是一个非常特殊的操作, 它不是数据处理, 不产生新的数据
         - interpolation应该放在所有的数据处理过程完成之后, 仅用于画图之前!
         '''
         if x_interp is None: # if x_interp is not given, then use self x_interp
-            x_interp=np.linspace(np.min(abs(self.Xdata)), np.max(abs(self.Xdata)), self.x_len()*multiplier)
+            x_interp=np.linspace(np.min(self.Xdata), np.max(self.Xdata), self.x_len()*multiplier)
 
         self.x_interp = x_interp
         self.Zdata_interp = np.full((self.y_len(), len(x_interp)), np.nan)
@@ -282,7 +296,7 @@ class dataFile(object):
 
         for i,x in enumerate(self.Xdata):
             z = self.Zdata[i].copy() # copy a zdata
-            z_interp = interp1d(x, z, kind=interp_kind, bounds_error=False, fill_value=np.nan)(x_interp) # interpolation
+            z_interp = interp1d(x, z, kind=interp_kind, bounds_error=False, fill_value=np.nan)(x_interp)
             self.Zdata_interp[i] = z_interp
 
         self.Xdata, self.Xdata_uninterp = self.Xdata_interp, self.Xdata
@@ -301,7 +315,8 @@ class dataFile(object):
         self.x_scaling, self.y_scaling = self.y_scaling, self.x_scaling
         return None
 
-    def plot_heatmap(self, cmap='Seismic', vmin=None, vmax=None, cmin=0, cmax=1, gamma=1, figsize=(6,4), show=False, swap_axes=False):
+    def plot_heatmap(self, figsize=(6,4), cmap='Seismic', swap_axes=False, 
+                     vmin=None, vmax=None, cmin=0, cmax=1, gamma=1, show=False):
         '''
         画出X,Y,Z的heatmap, 可指定colormap的一系列参数, 可指定画布大小
         若希望对图像做后续操作, 如添加辅助线等, 可以将show置为False(默认值), 并在函数外操作
@@ -341,7 +356,8 @@ class dataFile(object):
 
     def plot_linecuts(self, y_slice=[], y_list=None, z_shift=0, 
                       mark_y=True, mark_alpha=0.5, show=False, figsize=(14, 4),
-                      cmap='Seismic', xlim=(None, None), zlim=(None, None), vmin=None, vmax=None, cmin=0, cmax=1, gamma=1):
+                      cmap='Seismic', xlim=(None, None), zlim=(None, None), 
+                      vmin=None, vmax=None, cmin=0, cmax=1, gamma=1):
             '''
             - 请使用 range(m, n ,q) 或 [i, j, k] 来给出 y_slice
             - 若给出 y_list, 则会覆盖 y_slice
@@ -381,7 +397,7 @@ class dataFile(object):
 
             return fig, axs
 
-# ----------------------------- Write and read files -------------------------------
+# --------------------------------- Write and read files --------------------------------
            
     def write_Rc_in(self, file=None):
         if file is None:
@@ -439,7 +455,7 @@ class dataFile(object):
 
         return None
 
-# ------------------------------- process data ---------------------------------
+# ----------------------------------- process data --------------------------------------
 
 # Principal for this module:
 # - functions before this module do not change/create/delete any data
@@ -503,7 +519,44 @@ class dataFile(object):
         return None
     
 
-# ***********************************************************************************************************************************
+# ----------------------------------- append --------------------------------------
+
+    def join(self, new_dataFile):
+        '''
+        沿着y方向拼接数据
+        - 如果新数据沿x方向的长度和本数据不相等, 把短的数据用np.nan补齐;
+        - 这样补齐之后就无法用self,linecuts()画出2D了, 只能用self.interp_linecuts();
+        - 不改变new_dataFile.data, 只改变self.data
+        '''
+        joined_all_data = []
+
+        # 比较一下数据的长度
+        if self.x_len() < new_dataFile.x_len():
+            shorter_data = self
+            longer_data = new_dataFile
+        else:
+            shorter_data = new_dataFile
+            longer_data = self
+
+        # 把短的数据补齐, 注意就算二者相等也会补一下, 不过不会产生任何效果
+        nan_len = longer_data.x_len() - shorter_data.x_len()
+        for i in range(len(shorter_data.all_data)):
+            # 先把短的数据用nan补齐
+            new_data = np.pad(shorter_data.all_data[i], ((0, 0), (0, nan_len)), mode='constant', constant_values=np.nan)
+
+            # 再把长的数据和补齐的短的数据拼接起来
+            joined_data = np.vstack((longer_data.all_data[i], new_data))
+
+            joined_all_data.append(joined_data)
+        
+        self.all_data = joined_all_data
+        self.Xdata = self.all_data[self.column_x_index]
+        self.Ydata = self.all_data[self.column_y_index]
+        self.Zdata = self.all_data[self.column_z_index]
+
+        return
+
+# ***********************************************************************************************************************
 
 class filter_IV(dataFile):
     def __init__(self, directory, file, 
