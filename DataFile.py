@@ -271,12 +271,6 @@ class dataFile(object):
             self.change_Z(column_z_index)
 
         return None
-    
-    def create_XYZdata_reference(self):
-        self.Xdata = self.all_data[self.column_x_index]
-        self.Ydata = self.all_data[self.column_y_index]
-        self.Zdata = self.all_data[self.column_z_index]
-        return
 
     def cropbtlr(self, bottom=0, top=None, left=0, right=None):
         # 由于取slice操作会重新分配内存地址, 导致一系列指针问题, 所以就直接重新搞一套all_data
@@ -287,8 +281,6 @@ class dataFile(object):
 
         return None
     
-
-
 # ----------------------------------- plot -------------------------------------
 
     def swap_axes(self):
