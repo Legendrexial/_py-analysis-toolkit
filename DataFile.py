@@ -13,7 +13,8 @@ furnished to do so, subject to the following conditions:
 The above copyright notice and this permission notice shall be included in all
 copies or substantial portions of the Software.
 
-This software includes code that was inspired by or adapted from the work of 王照宇.
+This software includes code that was inspired by or adapted from the work of 
+王照宇, available at https://zenodo.org/records/6546974.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
@@ -230,6 +231,7 @@ class dataFile(object):
         # 有时候会使用负数索引, 例如-1, 这一句代码保证给出的column_x_index总是正数
         self.column_x_index = (index + len(self.all_data)) % len(self.all_data)
         self.Xdata = self.all_data[self.column_x_index]
+        self.Xname = self.column_names[self.column_x_index]
 
         print(f'X axis is now [{self.column_x_index}]:[{self.column_names[self.column_x_index]}] for {{{self.file}}}')
 
@@ -239,6 +241,7 @@ class dataFile(object):
         '''重新指定 Y data 为某列数据'''
         self.column_y_index = (index + len(self.all_data)) % len(self.all_data)
         self.Ydata = self.all_data[self.column_y_index]
+        self.Yname = self.column_names[self.column_y_index]
 
         print(f'Y axis is now [{self.column_y_index}]:[{self.column_names[self.column_y_index]}] for {{{self.file}}}')
 
@@ -248,6 +251,7 @@ class dataFile(object):
         '''重新指定 Z data 为某列数据'''
         self.column_z_index = (index + len(self.all_data)) % len(self.all_data)
         self.Zdata = self.all_data[self.column_z_index]
+        self.Zname = self.column_names[self.column_z_index]
 
         print(f'Z axis is now [{self.column_z_index}]:[{self.column_names[self.column_z_index]}] for {{{self.file}}}')
     
@@ -255,21 +259,25 @@ class dataFile(object):
 
     def change_XYZ(self, column_x_index, column_y_index, column_z_index):
         '''重新指定 XYZ data 为某列数据'''
-        
-        # 先计算对应的正数索引, 再按照索引指定XYZ data; 注意到这里考虑了索引为负数的情况
-        self.column_x_index = (column_x_index + len(self.all_data)) % len(self.all_data)
-        self.column_y_index = (column_y_index + len(self.all_data)) % len(self.all_data)
-        self.column_z_index = (column_z_index + len(self.all_data)) % len(self.all_data)
-        self.Xdata = self.all_data[self.column_x_index]
-        self.Ydata = self.all_data[self.column_y_index]
-        self.Zdata = self.all_data[self.column_z_index]
+        column_x_index = (column_x_index + len(self.all_data)) % len(self.all_data)
+        column_y_index = (column_y_index + len(self.all_data)) % len(self.all_data)
+        column_z_index = (column_z_index + len(self.all_data)) % len(self.all_data)
 
-        print(f'X axis is now [{self.column_x_index}]:[{self.column_names[self.column_x_index]}] for {{{self.file}}}')
-        print(f'Y axis is now [{self.column_y_index}]:[{self.column_names[self.column_y_index]}] for {{{self.file}}}')
-        print(f'Z axis is now [{self.column_z_index}]:[{self.column_names[self.column_z_index]}] for {{{self.file}}}')
+        if column_x_index != self.column_x_index:
+            self.change_X(column_x_index)
+        if column_y_index != self.column_y_index:
+            self.change_Y(column_y_index)
+        if column_z_index != self.column_z_index:
+            self.change_Z(column_z_index)
 
         return None
     
+    def create_XYZdata_reference(self):
+        self.Xdata = self.all_data[self.column_x_index]
+        self.Ydata = self.all_data[self.column_y_index]
+        self.Zdata = self.all_data[self.column_z_index]
+        return
+
     def cropbtlr(self, bottom=0, top=None, left=0, right=None):
         # 由于取slice操作会重新分配内存地址, 导致一系列指针问题, 所以就直接重新搞一套all_data
         self.all_data = [data[bottom:top, left:right] for data in self.all_data]
@@ -279,31 +287,9 @@ class dataFile(object):
 
         return None
     
+
+
 # ----------------------------------- plot -------------------------------------
-
-    def interp(self, x_interp=None, multiplier=1, interp_kind='linear'):
-        '''
-        - interpolation是一个非常特殊的操作, 它不是数据处理, 不产生新的数据
-        - interpolation应该放在所有的数据处理过程完成之后, 仅用于画图之前!
-        '''
-        if x_interp is None: # if x_interp is not given, then use self x_interp
-            x_interp=np.linspace(np.min(self.Xdata), np.max(self.Xdata), self.x_len()*multiplier)
-
-        self.x_interp = x_interp
-        self.Zdata_interp = np.full((self.y_len(), len(x_interp)), np.nan)
-        self.Xdata_interp = np.tile(x_interp, (self.y_len(), 1))
-        self.Ydata_interp = np.tile(self.y_box(), (len(x_interp), 1)).T
-
-        for i,x in enumerate(self.Xdata):
-            z = self.Zdata[i].copy() # copy a zdata
-            z_interp = interp1d(x, z, kind=interp_kind, bounds_error=False, fill_value=np.nan)(x_interp)
-            self.Zdata_interp[i] = z_interp
-
-        self.Xdata, self.Xdata_uninterp = self.Xdata_interp, self.Xdata
-        self.Ydata, self.Yata_uninterp = self.Ydata_interp, self.Ydata
-        self.Zdata, self.Zdata_uninterp = self.Zdata_interp, self.Zdata
-
-        return None
 
     def swap_axes(self):
         '''
@@ -461,7 +447,8 @@ class dataFile(object):
 # - functions before this module do not change/create/delete any data
 # - 这个模块不修改原始数据, 处理产生的数据是新数据
 # - 产生新数据后必须更新data info, 即更新all_data, column_names和comments
-# - 产生新数据后需手动self.change_XYZ()
+# - 对于处理产生的新数据确定为某个axis的, 可以选择change_axis=True, 这样会自动改变XYZ的指向, 例如self.interp()
+# - 对于处理产生的新数据不确定为某个axis的, 则需要手动 data.change_XYZ() 来指定, 例如self.calculate_sample_bias()
 
     def add_data_column(self, data, name):
         '''
@@ -478,8 +465,79 @@ class dataFile(object):
         
         return None
 
+    def interp(self, x_interp=None, multiplier=1, interp_kind='linear', change_axis=True):
+        '''
+        - 对 X,Y,Z data 沿 X axis 进行插值, 默认是线性插值
+        - 可以给定x_interp, 否则默认按照原始数据的最大最小值和multiplier来插值
+        - 当 Xdata 中含有nan时,必须自己给定x_interp, 推荐使用 np.nanmin() 和 np.nanmax() 来确定插值范围
+        '''
+        if x_interp is None: # if x_interp is not given, then use self x_interp
+            x_interp=np.linspace(np.min(self.Xdata), np.max(self.Xdata), self.x_len()*multiplier)
+
+        self.x_interp = x_interp
+        self.Zdata_interp = np.full((self.y_len(), len(x_interp)), np.nan)
+        self.Xdata_interp = np.tile(x_interp, (self.y_len(), 1))
+        self.Ydata_interp = np.tile(self.y_box(), (len(x_interp), 1)).T
+
+        for i,x in enumerate(self.Xdata):
+            z = self.Zdata[i].copy() # copy a zdata
+            z_interp = interp1d(x, z, kind=interp_kind, bounds_error=False, fill_value=np.nan)(x_interp)
+            self.Zdata_interp[i] = z_interp
+
+        # 添加新数据列
+        self.add_data_column(self.Xdata_interp, 'interpolated ' + self.Xname)
+        self.add_data_column(self.Ydata_interp, 'interpolated ' + self.Yname)
+        self.add_data_column(self.Zdata_interp, 'interpolated ' + self.Zname)
+
+        if change_axis: self.change_XYZ(-3, -2, -1)
+
+        return None
+  
+    def rotate_XY(self, theta, change_axis=True):
+        '''
+        逆时针旋转数据; theta取角度值(degree)
+        '''
+        # 整体思路是计算出每一个点在旋转后坐标系中的坐标
+
+        X, Y = self.Xdata, self.Ydata
+
+        # 定义旋转矩阵（逆时针旋转 50 度）
+        theta = np.radians(theta)
+        rotation_matrix = np.array([[np.cos(theta), -np.sin(theta)],
+                                    [np.sin(theta), np.cos(theta)]])
+
+        # 将原始坐标转换到新坐标系
+        rotated_coords = rotation_matrix @ np.vstack((X.flatten(), Y.flatten()))
+        X_rotated = rotated_coords[0, :].reshape(X.shape)
+        Y_rotated = rotated_coords[1, :].reshape(Y.shape)
+
+        # 添加新数据列
+        self.add_data_column(X_rotated, 'rotated ' + self.Xname)
+        self.add_data_column(Y_rotated, 'rotated ' + self.Yname)
+
+        if change_axis: 
+            self.change_X(-2)
+            self.change_Y(-1)
+
+        return
+
+    def new_data_to_axis(self, axis):
+        '''
+        专为不确定新数据为某个axis的情况设计, 例如self.calculate_sample_bias()和self.calculate_differential_conductance()
+        '''
+        if axis == 'X':
+            self.change_X(-1)
+        elif axis == 'Y':
+            self.change_Y(-1)
+        elif axis == 'Z':
+            self.change_Z(-1)
+        else:
+            print('Illegal axis input! Please input \"X\", \"Y\" or \"Z\".')
+        return
+    
     def calculate_sample_bias(self, bias_column_idx, current_volt_column_idx, 
-                              current_amplifier_factor, filter_bias, Rc, true_zero_bias):
+                              current_amplifier_factor, filter_bias, Rc, true_zero_bias,
+                              to_axis=False):
         '''
         - 计算sample bias需要bias和current数据列, filter bias的插值函数, Rc和true zero bias的值
         '''
@@ -493,12 +551,15 @@ class dataFile(object):
         sample_bias_data = bias - filter_bias(current) - current*Rc*1e3 - true_zero_bias
         
         # 更新数据信息
-        self.add_data_column(sample_bias_data, 'sample bias (mV)')
+        self.add_data_column(sample_bias_data, 'V (mV)')
+
+        if to_axis: self.new_data_to_axis(to_axis)
 
         return None
 
     def calculate_differential_conductance(self, sr1_X_column_idx, current_volt_column_idx, 
-                                           excitation, current_amplifier_factor, R_filter, Rc):
+                                           excitation, current_amplifier_factor, R_filter, Rc,
+                                           to_axis=False):
         '''
         - excitation is usually 20e-6
         - current amplifier factor is usually 1e6
@@ -513,20 +574,22 @@ class dataFile(object):
         didv = di/dv/self.G0 # 2e^2/h
 
 
-        # 更新数据信息
+        # 添加新数据列
         self.add_data_column(didv, 'dI/dV (2e^2/h)')
 
-        return None
-    
+        if to_axis: self.new_data_to_axis(to_axis)
 
-# ----------------------------------- append --------------------------------------
+        return None
+
+# --------------------------------------- join -----------------------------------------
 
     def join(self, new_dataFile):
         '''
         沿着y方向拼接数据
         - 如果新数据沿x方向的长度和本数据不相等, 把短的数据用np.nan补齐;
         - 这样补齐之后就无法用self,linecuts()画出2D了, 只能用self.interp_linecuts();
-        - 不改变new_dataFile.data, 只改变self.data
+        - 不改变new_dataFile, 只改变self.all_data
+        - join完成后 Y axis 仍然是升序排列的
         '''
         joined_all_data = []
 
@@ -543,9 +606,12 @@ class dataFile(object):
         for i in range(len(shorter_data.all_data)):
             # 先把短的数据用nan补齐
             new_data = np.pad(shorter_data.all_data[i], ((0, 0), (0, nan_len)), mode='constant', constant_values=np.nan)
-
-            # 再把长的数据和补齐的短的数据拼接起来
-            joined_data = np.vstack((longer_data.all_data[i], new_data))
+            
+            # 再把长的数据和补齐的短的数据拼接起来, 注意要使y轴升序排列
+            if longer_data.y_box()[0] < shorter_data.y_box()[0]:
+                joined_data = np.vstack((longer_data.all_data[i], new_data))
+            else:
+                joined_data = np.vstack((new_data, longer_data.all_data[i]))
 
             joined_all_data.append(joined_data)
         
@@ -553,6 +619,8 @@ class dataFile(object):
         self.Xdata = self.all_data[self.column_x_index]
         self.Ydata = self.all_data[self.column_y_index]
         self.Zdata = self.all_data[self.column_z_index]
+
+        self.file = self.file + ' + ' + new_dataFile.file
 
         return
 
