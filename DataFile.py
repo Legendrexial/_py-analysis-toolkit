@@ -441,6 +441,7 @@ class dataFile(object):
 # - 产生新数据后必须更新data info, 即更新all_data, column_names和comments
 # - 对于处理产生的新数据确定为某个axis的, 可以选择change_axis=True, 这样会自动改变XYZ的指向, 例如self.interp()
 # - 对于处理产生的新数据不确定为某个axis的, 则需要手动 data.change_XYZ() 来指定, 例如self.calculate_sample_bias()
+# - 所有的rotation都选逆时针为正方向, 且角度单位为degree(角度制)
 
     def add_data_column(self, data, name):
         '''
@@ -484,22 +485,26 @@ class dataFile(object):
         if change_axis: self.change_XYZ(-3, -2, -1)
 
         return None
-  
+
+    def rotation_matrix(self, theta):
+        '''
+        - 逆时针旋转坐标系中的旋转矩阵(注意这是被动旋转)
+        - theta is in degree
+        '''
+        theta = np.radians(theta)
+        return np.array([[np.cos(theta), np.sin(theta)],
+                        [-np.sin(theta), np.cos(theta)]])
+
     def rotate_XY(self, theta, change_axis=True):
         '''
-        逆时针旋转数据; theta取角度值(degree)
+        Counter-clockwise rotate X-Y coordinate system by theta; theta takes the unit of degree
         '''
         # 整体思路是计算出每一个点在旋转后坐标系中的坐标
 
         X, Y = self.Xdata, self.Ydata
 
-        # 定义旋转矩阵（逆时针旋转 50 度）
-        theta = np.radians(theta)
-        rotation_matrix = np.array([[np.cos(theta), -np.sin(theta)],
-                                    [np.sin(theta), np.cos(theta)]])
-
         # 将原始坐标转换到新坐标系
-        rotated_coords = rotation_matrix @ np.vstack((X.flatten(), Y.flatten()))
+        rotated_coords = self.rotation_matrix(theta) @ np.vstack((X.flatten(), Y.flatten()))
         X_rotated = rotated_coords[0, :].reshape(X.shape)
         Y_rotated = rotated_coords[1, :].reshape(Y.shape)
 
@@ -512,24 +517,36 @@ class dataFile(object):
             self.change_Y(-1)
 
         return
-
-    def new_data_to_axis(self, axis):
-        '''
-        专为不确定新数据为某个axis的情况设计, 例如self.calculate_sample_bias()和self.calculate_differential_conductance()
-        '''
-        if axis == 'X':
-            self.change_X(-1)
-        elif axis == 'Y':
-            self.change_Y(-1)
-        elif axis == 'Z':
-            self.change_Z(-1)
-        else:
-            print('Illegal axis input! Please input \"X\", \"Y\" or \"Z\".')
-        return
     
+    def calculate_VCP_VBT_from_VSG(self, k, b, theta):
+        '''
+        - 这是一个非常特异化的函数, 普适性很差, 专门为下面的情况(也就是 paper: tunable coupling ZBP 中的情况)设计的:
+            - 首先使用此函数的 data(self) 应该是一个 Bias vs. SG, dI/dV 的数据
+            - SG 是 self.Ydata, 没有记录 TG, 只知道 TG = k*SG + b
+            - 在相图坐标系中, SG 是 X 轴, TG 是 Y 轴
+            - !!!对坐标系进行了逆时针旋转, 角度是 theta , 使得 CP 为 X 轴, BT 为 Y 轴, 
+              这一点非常重要, 因为朝另一个方向旋转可能导致 CP 是 Y 轴, 这样的话计算会出错误(CP和BT会反过来)
+            - 注意 theta 可以为负值, 选定逆时针是正方向
+            - 希望通过此函数得到每个 self.Ydata (SG) 对应的 CP 和 BT, 并选 CP 或 BT 作为新的 self.Ydata
+        - theta is in degree!
+        - 坐标满足关系: CP = SG*cos(theta) + TG*sin(theta), BT = -SG*sin(theta) + TG*cos(theta)
+        '''
+        SG = self.Ydata
+        TG = k*SG + b
+
+        # 将原始坐标转换到新坐标系
+        rotated_coords = self.rotation_matrix(theta) @ np.vstack((SG.flatten(), TG.flatten()))
+        CP = rotated_coords[0, :].reshape(SG.shape)
+        BT = rotated_coords[1, :].reshape(SG.shape)
+
+        # 添加新数据列
+        self.add_data_column(CP, 'CP gate (V)')
+        self.add_data_column(BT, 'BT gate (V)')
+
+        return
+
     def calculate_sample_bias(self, bias_column_idx, current_volt_column_idx, 
-                              current_amplifier_factor, filter_bias, Rc, true_zero_bias,
-                              to_axis=False):
+                              current_amplifier_factor, filter_bias, Rc, true_zero_bias):
         '''
         - 计算sample bias需要bias和current数据列, filter bias的插值函数, Rc和true zero bias的值
         '''
@@ -545,13 +562,10 @@ class dataFile(object):
         # 更新数据信息
         self.add_data_column(sample_bias_data, 'V (mV)')
 
-        if to_axis: self.new_data_to_axis(to_axis)
-
         return None
 
     def calculate_differential_conductance(self, sr1_X_column_idx, current_volt_column_idx, 
-                                           excitation, current_amplifier_factor, R_filter, Rc,
-                                           to_axis=False):
+                                           excitation, current_amplifier_factor, R_filter, Rc,):
         '''
         - excitation is usually 20e-6
         - current amplifier factor is usually 1e6
@@ -565,11 +579,8 @@ class dataFile(object):
         dv = excitation - series_resistance*di # V
         didv = di/dv/self.G0 # 2e^2/h
 
-
         # 添加新数据列
         self.add_data_column(didv, 'dI/dV (2e^2/h)')
-
-        if to_axis: self.new_data_to_axis(to_axis)
 
         return None
 
