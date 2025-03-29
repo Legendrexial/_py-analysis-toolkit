@@ -348,9 +348,9 @@ class dataFile(object):
             fig.set_facecolor('white')
             
             y_box = self.y_box()
-            for i, idx_y in enumerate(y_slice):
+            for i, idx_y in enumerate(y_slice[::-1]):
                 c = 'C' + str(i) # unify colors
-                axs[0].plot(self.Xdata[idx_y]*self.x_scaling, self.Zdata[idx_y]*self.z_scaling + idx_y*z_shift, 
+                axs[0].plot(self.Xdata[idx_y]*self.x_scaling, self.Zdata[idx_y]*self.z_scaling + (idx_y-y_slice[0])*z_shift, 
                             label='y={:.3g}, idx_y={}'.format(y_box[idx_y], idx_y), lw=0.5, c=c)
                 if mark_y: axs[1].axvline(y_box[idx_y]*self.y_scaling, ls='--', 
                                           label='idx_y = {}'.format(idx_y), lw=1, c=c, alpha=mark_alpha)
