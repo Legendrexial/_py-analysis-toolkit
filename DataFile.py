@@ -35,6 +35,16 @@ from scipy.interpolate import interp1d
 
 import colormap
 
+'''
+Principle for this module:
+- __init__完成后, 和数据有关的且独立变化的量: self.all_data, self.column_names, self.column_x/y/z_index, self.X/Y/Zname
+    - 其他所有量都是临时调用于self.all_data, self.column_names和self.column_x/y/z_index, 所以在做任何处理时只需要考虑这几个量即可
+    - self.X/Y/Zdata是self.all_data中某一列数据的引用, 使用self.column_x/y/z_index来创造这一引用; 
+    - 在self.all_data改变时要考虑到self.X/Y/Zdata引用的重新赋值
+    - self.X/Y/Zname是独立量, 不是引用; 但在self.change_X/Y/Z()中会改变为self.column_names中对应的列名(也不是引用)
+- self.comments按理说也应该是独立变化的, 但是这个东西只在self.save_dat_processed()中用到, 所以现在还没写
+'''
+
 class dataFile(object):
     def __init__(self, directory, file,
                  column_x_index=2, column_y_index=1, column_z_index=3,
@@ -435,7 +445,7 @@ class dataFile(object):
 
 # ----------------------------------- process data --------------------------------------
 
-# Principal for this module:
+# Principle for this module:
 # - functions before this module do not change/create/delete any data
 # - 这个模块不修改原始数据, 处理产生的数据是新数据
 # - 产生新数据后必须更新data info, 即更新all_data, column_names和comments
