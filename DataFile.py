@@ -37,12 +37,13 @@ import colormap
 
 '''
 Principle for this module:
+- 使用逻辑总是尽可能贴近 Qtplot;
 - __init__完成后, 和数据有关的且独立变化的量: self.all_data, self.column_names, self.column_x/y/z_index, self.X/Y/Zname
     - 其他所有量都是临时调用于self.all_data, self.column_names和self.column_x/y/z_index, 所以在做任何处理时只需要考虑这几个量即可
     - self.X/Y/Zdata是self.all_data中某一列数据的引用, 使用self.column_x/y/z_index来创造这一引用; 
     - 在self.all_data改变时要考虑到self.X/Y/Zdata引用的重新赋值
     - self.X/Y/Zname是独立量, 不是引用; 但在self.change_X/Y/Z()中会改变为self.column_names中对应的列名(也不是引用)
-- self.comments按理说也应该是独立变化的, 但是这个东西只在self.save_dat_processed()中用到, 所以现在还没写
+- self.comments不需要变化的, 它只在self.save_XYZdata_to_dat_file()中用到, 故在该函数中做了特殊处理
 '''
 
 class dataFile(object):
@@ -410,7 +411,11 @@ class dataFile(object):
             print( "Wrong! Rc file is not accessible. Use default Rc")
             return True
 
-    def save_dat_processed(self, directory=None, label='processed'):
+    def save_XYZdata_to_new_dat(self, directory=None, label='processed'):
+        '''
+        - 以 Qtplot 的格式要求保存数据, 保存后的数据可以直接用 Qtplot 打开
+        - 只保存 XYZdata, 其他数据不保存
+        '''
         if directory is None:
             directory = self.directory
 
@@ -426,17 +431,25 @@ class dataFile(object):
         output_data = np.column_stack((Y_flat, X_flat, Z_flat))
 
         # 写入新文件
+        # 为了使Qtplot能正确读取数据, 需要在文件开头写入表头和对应数据列的comments
+        # 其中重要的是 Column 1,2,3 的name以及 Column 1,2 的size, 其他参数不重要
+        # Column 1 是Y轴, Column 2 是X轴, Column 3 是Z轴
+        X_comment = self.comments[2]
+        Y_comment = self.comments[1]
+        Z_comment = self.comments[3]
+
+        X_comment[4] = X_comment[4][0:8] + self.Xname + '\n'
+        Y_comment[4] = Y_comment[4][0:8] + self.Yname + '\n'
+        Z_comment[4] = Z_comment[4][0:8] + self.Zname + '\n'
+
+        X_comment[6] = X_comment[6][0:8] + str(self.x_len()) + '\n'
+        Y_comment[6] = Y_comment[6][0:8] + str(self.y_len()) + '\n'
+
         with open(file_path, 'w') as file:
             # 先写入表头和对应数据列的comments
-            for comment in self.comments[0]:
-                file.write(comment)
-            for comment in self.comments[self.column_y_index]:
-                file.write(comment)
-            for comment in self.comments[self.column_x_index]:
-                file.write(comment)
-            for comment in self.comments[self.column_z_index]:
-                file.write(comment)
-
+            for comment in [self.comments[0], Y_comment, X_comment, Z_comment]:
+                for line in comment:
+                    file.write(line)
             # 再写入数据
             np.savetxt(file, output_data, fmt='%.6f', delimiter='\t')
         print('Data is saved in {}'.format(file_path))
@@ -600,9 +613,17 @@ class dataFile(object):
         '''
         沿着y方向拼接数据
         - 如果新数据沿x方向的长度和本数据不相等, 把短的数据用np.nan补齐;
-        - 这样补齐之后就无法用self,linecuts()画出2D了, 只能用self.interp_linecuts();
+        - 如果涉及到np.nan补齐, 则在join()之后必须先插值self.interp()才能画图展示self.plot_xxx()
         - 不改变new_dataFile, 只改变self.all_data
         - join完成后 Y axis 仍然是升序排列的
+
+        使用建议:
+        - 非常适用于将X方向长度相同的数据拼接在一起, 以将两组数据画在同一张heatmap中, 
+          例如出现扫2D中途中断/Y方向范围不够而补测等情况导致本应该是同一张2D的数据被分在两组数据中,
+          这种情况下使用self.join()是最合适的, 不会出现任何问题, 新组成的数据就像是正常扫描出的一张2D一样和谐
+        - 不太适用于X方向长度不相同的数据, 因为这样数据中会出现nan, 要画图还需要进行插值,
+          对于这种情况, 如果想把几组不同的数据画在同一张heatmap中, 推荐直接用plot_multiple_datas_heatmap_in_ax(),
+          它的逻辑是直接 ax.pcolormesh(data1), ax.pcolormesh(data2), ...来画出所有数据, 同时保证所有数据都采用一样的colroscale.
         '''
         joined_all_data = []
 
