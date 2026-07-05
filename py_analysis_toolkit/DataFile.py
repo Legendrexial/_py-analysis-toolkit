@@ -33,7 +33,7 @@ import matplotlib.pyplot as plt
 from scipy.signal import savgol_filter
 from scipy.interpolate import interp1d
 
-import colormap
+from . import colormap
 
 '''
 Principle for this module:
