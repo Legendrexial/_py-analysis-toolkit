@@ -7,7 +7,7 @@ A Python toolkit for data analysis, colormap management, and plotting.
 To install this package in editable mode, run:
 
 ```bash
-pip install -e .
+python -m pip install -e .
 ```
 
 ## Features
